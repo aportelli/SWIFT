@@ -102,10 +102,24 @@
 #define FIND_SUB _FIND_SUB(FUNCTION)
 
 #define _IACT_NONSYM(f) PASTE(runner_iact_nonsym, f)
-#define IACT_NONSYM _IACT_NONSYM(FUNCTION)
-
 #define _IACT(f) PASTE(runner_iact, f)
+
+#ifdef SWIFT_TASK_PERF
+/* Count every kernel call made by the runner r in scope */
+#define IACT_NONSYM(...)                              \
+  do {                                                \
+    TASK_PERF_ADD(r, task_perf_hydro_iact_nonsym, 1); \
+    _IACT_NONSYM(FUNCTION)(__VA_ARGS__);              \
+  } while (0)
+#define IACT(...)                                  \
+  do {                                             \
+    TASK_PERF_ADD(r, task_perf_hydro_iact_sym, 1); \
+    _IACT(FUNCTION)(__VA_ARGS__);                  \
+  } while (0)
+#else
+#define IACT_NONSYM _IACT_NONSYM(FUNCTION)
 #define IACT _IACT(FUNCTION)
+#endif
 
 #if ((FUNCTION_TASK_LOOP == TASK_LOOP_DENSITY) ||  \
      (FUNCTION_TASK_LOOP == TASK_LOOP_GRADIENT) || \

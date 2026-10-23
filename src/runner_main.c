@@ -209,6 +209,11 @@ void *runner_main(void *data) {
       r->t = t;
 #endif
 
+#ifdef SWIFT_TASK_PERF
+      /* Start counting the interactions of this task from scratch */
+      r->perf = (struct task_perf){{0}};
+#endif
+
       const ticks task_beg = getticks();
       /* Different types of tasks... */
       switch (t->type) {
@@ -577,6 +582,11 @@ void *runner_main(void *data) {
           error("Unknown/invalid task type (%d).", t->type);
       }
       r->active_time += (getticks() - task_beg);
+
+#ifdef SWIFT_TASK_PERF
+      /* Record the interactions performed by this task */
+      t->perf = r->perf;
+#endif
 
 /* Mark that we have run this task on these cells */
 #ifdef SWIFT_DEBUG_CHECKS

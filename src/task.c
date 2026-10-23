@@ -191,8 +191,8 @@ MPI_Comm subtaskMPI_comms[task_subtype_count];
  */
 #define TASK_CELL_OVERLAP(TYPE, ARRAY, COUNT)                    \
   __attribute__((always_inline)) INLINE static size_t            \
-      task_cell_overlap_##TYPE(const struct cell *restrict ci,   \
-                               const struct cell *restrict cj) { \
+  task_cell_overlap_##TYPE(const struct cell *restrict ci,       \
+                           const struct cell *restrict cj) {     \
                                                                  \
     if (ci == NULL || cj == NULL) return 0;                      \
                                                                  \
@@ -1278,6 +1278,74 @@ void task_free_mpi_comms(void) {
 }
 #endif
 
+#ifdef SWIFT_TASK_PERF
+/* Names of the #task_perf_counters */
+static const char *task_perf_counter_names[task_perf_count] = {
+    "hydro_iact_sym",     "hydro_iact_nonsym", "grav_p2p_full",
+    "grav_p2p_truncated", "grav_m2p_full",     "grav_m2p_truncated",
+    "grav_m2l",           "grav_parts_loaded"};
+
+/**
+ * @brief Dump the interaction counters of the tasks run during this step.
+ *
+ * Rows are in the same order as the ones of the thread_info dump of the same
+ * step, but additionally contain the number of particles of each type in the
+ * cells, the cell depth and the #task_perf_counters.
+ *
+ * @param e the #engine
+ * @param step the current step.
+ */
+static void task_dump_perf(struct engine *e, int step) {
+
+  char dumpfile[64];
+#ifdef WITH_MPI
+  snprintf(dumpfile, sizeof(dumpfile), "task_perf_MPI-rank%d-step%d.dat",
+           engine_rank, step);
+#else
+  snprintf(dumpfile, sizeof(dumpfile), "task_perf-step%d.dat", step);
+#endif
+  FILE *file = fopen(dumpfile, "w");
+  if (file == NULL) error("Could not create file '%s'.", dumpfile);
+
+  /* Header: everything needed to turn the counters into FLOPs and bytes */
+  fprintf(file, "# cpufreq %llu\n", clocks_get_cpufreq());
+  fprintf(file, "# tic_step %lld toc_step %lld\n", (long long)e->tic_step,
+          (long long)e->toc_step);
+  fprintf(file, "# updates %lld g_updates %lld s_updates %lld\n", e->updates,
+          e->g_updates, e->s_updates);
+  fprintf(file,
+          "# sizeof part %zu xpart %zu gpart %zu spart %zu bpart %zu "
+          "gravity_tensors %zu sort_entry %zu\n",
+          sizeof(struct part), sizeof(struct xpart), sizeof(struct gpart),
+          sizeof(struct spart), sizeof(struct bpart),
+          sizeof(struct gravity_tensors), sizeof(struct sort_entry));
+  fprintf(file,
+          "# rid type subtype self tic toc ci_hcount cj_hcount ci_gcount "
+          "cj_gcount ci_scount cj_scount ci_depth");
+  for (int k = 0; k < task_perf_count; k++)
+    fprintf(file, " %s", task_perf_counter_names[k]);
+  fprintf(file, "\n");
+
+  for (int l = 0; l < e->sched.nr_tasks; l++) {
+    const struct task *t = &e->sched.tasks[l];
+    if (t->implicit || t->tic <= e->tic_step) continue;
+    const struct cell *ci = t->ci;
+    const struct cell *cj = t->cj;
+    fprintf(
+        file, "%i %i %i %i %llu %llu %i %i %i %i %i %i %i", t->rid, t->type,
+        t->subtype, (cj == NULL), (unsigned long long)t->tic,
+        (unsigned long long)t->toc, (ci == NULL) ? 0 : ci->hydro.count,
+        (cj == NULL) ? 0 : cj->hydro.count, (ci == NULL) ? 0 : ci->grav.count,
+        (cj == NULL) ? 0 : cj->grav.count, (ci == NULL) ? 0 : ci->stars.count,
+        (cj == NULL) ? 0 : cj->stars.count, (ci == NULL) ? -1 : ci->depth);
+    for (int k = 0; k < task_perf_count; k++)
+      fprintf(file, " %lld", t->perf.counts[k]);
+    fprintf(file, "\n");
+  }
+  fclose(file);
+}
+#endif /* SWIFT_TASK_PERF */
+
 /**
  * @brief dump all the tasks of all the known engines into a file for
  * postprocessing.
@@ -1392,6 +1460,10 @@ void task_dump_all(struct engine *e, int step) {
   }
   fclose(file_thread);
 #endif  // WITH_MPI
+
+#ifdef SWIFT_TASK_PERF
+  task_dump_perf(e, step);
+#endif
 
   if (e->verbose)
     message("took %.3f %s.", clocks_from_ticks(getticks() - tic),

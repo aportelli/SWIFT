@@ -294,6 +294,22 @@ if test "$enable_task_debugging" = "yes"; then
    AC_DEFINE([SWIFT_DEBUG_TASKS],1,[Enable task debugging])
 fi
 
+# Check if the task performance counters are on.
+AC_ARG_ENABLE([task-perf],
+   [AS_HELP_STRING([--enable-task-perf],
+     [Count interactions performed by each task and dump them alongside the task dumps (implies --enable-task-debugging) @<:@yes/no@:>@]
+   )],
+   [enable_task_perf="$enableval"],
+   [enable_task_perf="no"]
+)
+if test "$enable_task_perf" = "yes"; then
+   AC_DEFINE([SWIFT_TASK_PERF],1,[Enable task performance counters])
+   if test "$enable_task_debugging" != "yes"; then
+      enable_task_debugging="yes"
+      AC_DEFINE([SWIFT_DEBUG_TASKS],1,[Enable task debugging])
+   fi
+fi
+
 # Check if threadpool debugging is on.
 AC_ARG_ENABLE([threadpool-debugging],
    [AS_HELP_STRING([--enable-threadpool-debugging],
@@ -3596,6 +3612,7 @@ AC_MSG_RESULT([
    Atomic operations in tasks  : $enable_atomics_within_tasks
    Individual timers           : $enable_timers
    Task debugging              : $enable_task_debugging
+   Task performance counters   : $enable_task_perf
    Threadpool debugging        : $enable_threadpool_debugging
    Debugging checks            : $enable_debugging_checks
    Interaction debugging       : $enable_debug_interactions

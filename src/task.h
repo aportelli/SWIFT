@@ -28,6 +28,7 @@
 /* Includes. */
 #include "align.h"
 #include "cycle.h"
+#include "task_perf.h"
 #include "timeline.h"
 
 /* Forward declarations to avoid circular inclusion dependencies. */
@@ -290,6 +291,11 @@ struct task {
 
   /* Total time spent running this task */
   ticks total_ticks;
+
+#ifdef SWIFT_TASK_PERF
+  /*! Interaction counters accumulated while running this task */
+  struct task_perf perf;
+#endif
 
 #ifdef SWIFT_DEBUG_CHECKS
   /* When was this task last run? */

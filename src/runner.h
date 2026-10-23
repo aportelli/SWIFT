@@ -29,6 +29,7 @@
 /* Local headers. */
 #include "cache.h"
 #include "gravity_cache.h"
+#include "task_perf.h"
 
 struct cell;
 struct engine;
@@ -87,6 +88,11 @@ struct runner {
 #ifdef SWIFT_DEBUG_CHECKS
   /*! Pointer to the task this runner is currently performing */
   const struct task *t;
+#endif
+
+#ifdef SWIFT_TASK_PERF
+  /*! Interaction counters of the task this runner is currently performing */
+  struct task_perf perf;
 #endif
 };
 

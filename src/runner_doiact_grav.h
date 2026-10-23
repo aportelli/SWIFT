@@ -114,6 +114,7 @@ static INLINE void runner_dopair_grav_mm_nonsym(struct runner *r,
 #endif
 
   /* Let's interact at this level */
+  TASK_PERF_ADD(r, task_perf_grav_m2l, 1);
   gravity_M2L_nonsym(&ci->grav.multipole->pot, multi_j, ci->grav.multipole->CoM,
                      cj->grav.multipole->CoM, props, periodic, dim, r_s_inv);
 
@@ -197,6 +198,7 @@ static INLINE void runner_dopair_grav_mm_symmetric(struct runner *r,
 #endif
 
   /* Let's interact at this level */
+  TASK_PERF_ADD(r, task_perf_grav_m2l, 2);
   gravity_M2L_symmetric(&ci->grav.multipole->pot, &cj->grav.multipole->pot,
                         multi_i, multi_j, ci->grav.multipole->CoM,
                         cj->grav.multipole->CoM, props, periodic, dim, r_s_inv);

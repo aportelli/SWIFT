@@ -54,6 +54,44 @@ static INLINE void runner_clear_grav_flags(struct cell *c,
                          cell_flag_unskip_pair_grav_processed);
 }
 
+#ifdef SWIFT_TASK_PERF
+/**
+ * @brief Count the P2P and M2P interactions of the active particles stored
+ * in a gravity cache.
+ *
+ * @param r The #runner.
+ * @param cache_i The #gravity_cache of the particles receiving forces.
+ * @param gcount_i The number of particles in cache_i.
+ * @param gcount_j The number of P2P partners per active particle.
+ * @param truncated Are we using the mesh-truncated kernels?
+ */
+static INLINE void runner_grav_perf_count(struct runner *r,
+                                          const struct gravity_cache *cache_i,
+                                          const int gcount_i,
+                                          const int gcount_j,
+                                          const int truncated) {
+
+  long long n_p2p = 0, n_m2p = 0;
+  for (int i = 0; i < gcount_i; i++) {
+    if (!cache_i->active[i]) continue;
+    if (cache_i->use_mpole[i])
+      n_m2p++;
+    else
+      n_p2p++;
+  }
+  TASK_PERF_ADD(
+      r, truncated ? task_perf_grav_p2p_truncated : task_perf_grav_p2p_full,
+      n_p2p * gcount_j);
+  TASK_PERF_ADD(
+      r, truncated ? task_perf_grav_m2p_truncated : task_perf_grav_m2p_full,
+      n_m2p);
+}
+#define RUNNER_GRAV_PERF_COUNT(r, c, ni, nj, t) \
+  runner_grav_perf_count(r, c, ni, nj, t)
+#else
+#define RUNNER_GRAV_PERF_COUNT(r, c, ni, nj, t)
+#endif
+
 /**
  * @brief Recursively propagate the multipoles down the tree by applying the
  * L2L and L2P kernels.
@@ -175,6 +213,7 @@ void runner_do_grav_down(struct runner *r, struct cell *c, int timer) {
  *
  * This function *must* be called at the leaf level for particles i.
  *
+ * @param r The #runner (for the task performance counters only).
  * @param gparts_i The particles receiving forces (at leaf level).
  * @param gcount_i The number of particles receiving forces.
  * @param gparts_j The particles giving forces (at any level).
@@ -189,7 +228,7 @@ void runner_do_grav_down(struct runner *r, struct cell *c, int timer) {
  * @param multi_j The multipole in cell j.
  */
 static INLINE void runner_dopair_grav_pp_full_no_cache(
-    struct gpart *restrict gparts_i, const int gcount_i,
+    struct runner *r, struct gpart *restrict gparts_i, const int gcount_i,
     const struct gpart *restrict gparts_j,
     const struct gpart_foreign *gparts_foreign_j, const int gcount_j,
     const struct engine *e, const struct gravity_props *grav_props,
@@ -251,6 +290,7 @@ static INLINE void runner_dopair_grav_pp_full_no_cache(
       const float h_inv_i = 1.f / h_i;
 
       /* Interact! */
+      TASK_PERF_ADD(r, task_perf_grav_m2p_full, 1);
       float f_x, f_y, f_z, pot_ij;
       runner_iact_grav_pm_full(dx_multi, dy_multi, dz_multi, r2_multi, h_i,
                                h_inv_i, &multi_j->m_pole, &f_x, &f_y, &f_z,
@@ -277,6 +317,8 @@ static INLINE void runner_dopair_grav_pp_full_no_cache(
 #endif
 
     } else {
+
+      TASK_PERF_ADD(r, task_perf_grav_p2p_full, gcount_j);
 
       if (cj->nodeID == e->nodeID) {
 
@@ -440,6 +482,7 @@ static INLINE void runner_dopair_grav_pp_full_no_cache(
  *
  * This function *must* be called at the leaf level for particles i.
  *
+ * @param r The #runner (for the task performance counters only).
  * @param gparts_i The particles receiving forces (at leaf level).
  * @param gcount_i The number of particles receiving forces.
  * @param gparts_j The particles giving forces (at any level).
@@ -455,7 +498,7 @@ static INLINE void runner_dopair_grav_pp_full_no_cache(
  * @param multi_j The multipole in cell j.
  */
 static INLINE void runner_dopair_grav_pp_truncated_no_cache(
-    struct gpart *restrict gparts_i, const int gcount_i,
+    struct runner *r, struct gpart *restrict gparts_i, const int gcount_i,
     const struct gpart *restrict gparts_j,
     const struct gpart_foreign *gparts_foreign_j, const int gcount_j,
     const float dim[3], const struct engine *e,
@@ -527,6 +570,7 @@ static INLINE void runner_dopair_grav_pp_truncated_no_cache(
       const float h_inv_i = 1.f / h_i;
 
       /* Interact! */
+      TASK_PERF_ADD(r, task_perf_grav_m2p_truncated, 1);
       float f_x, f_y, f_z, pot_ij;
       runner_iact_grav_pm_truncated(dx_multi, dy_multi, dz_multi, r2_multi, h_i,
                                     h_inv_i, r_s_inv, &multi_j->m_pole, &f_x,
@@ -553,6 +597,8 @@ static INLINE void runner_dopair_grav_pp_truncated_no_cache(
 #endif
 
     } else {
+
+      TASK_PERF_ADD(r, task_perf_grav_p2p_truncated, gcount_j);
 
       if (cj->nodeID == e->nodeID) {
 
@@ -1501,6 +1547,8 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
         gcount_padded_j, shift_j, cj, e->gravity_properties);
   }
 
+  TASK_PERF_ADD(r, task_perf_grav_parts_loaded, gcount_i + gcount_j);
+
   /* Can we use the Newtonian version or do we need the truncated one ? */
   if (!periodic) {
 
@@ -1510,6 +1558,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
     if (ci_active) {
 
       /* First the P2P */
+      RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount_i, gcount_padded_j, 0);
       runner_dopair_grav_pp_full(
           ci_cache, cj_cache, gcount_i, gcount_j, gcount_padded_j, periodic,
           dim, e, ci->grav.parts, cj->grav.parts, cj->grav.parts_foreign,
@@ -1524,6 +1573,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
     if (cj_active && symmetric) {
 
       /* First the P2P */
+      RUNNER_GRAV_PERF_COUNT(r, cj_cache, gcount_j, gcount_padded_i, 0);
       runner_dopair_grav_pp_full(
           cj_cache, ci_cache, gcount_j, gcount_i, gcount_padded_i, periodic,
           dim, e, cj->grav.parts, ci->grav.parts, ci->grav.parts_foreign,
@@ -1561,6 +1611,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
       if (ci_active) {
 
         /* First the (truncated) P2P */
+        RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount_i, gcount_padded_j, 1);
         runner_dopair_grav_pp_truncated(
             ci_cache, cj_cache, gcount_i, gcount_j, gcount_padded_j, dim,
             r_s_inv, e, ci->grav.parts, cj->grav.parts, cj->grav.parts_foreign,
@@ -1575,6 +1626,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
       if (cj_active && symmetric) {
 
         /* First the (truncated) P2P */
+        RUNNER_GRAV_PERF_COUNT(r, cj_cache, gcount_j, gcount_padded_i, 1);
         runner_dopair_grav_pp_truncated(
             cj_cache, ci_cache, gcount_j, gcount_i, gcount_padded_i, dim,
             r_s_inv, e, cj->grav.parts, ci->grav.parts, ci->grav.parts_foreign,
@@ -1595,6 +1647,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
       if (ci_active) {
 
         /* First the (Newtonian) P2P */
+        RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount_i, gcount_padded_j, 0);
         runner_dopair_grav_pp_full(
             ci_cache, cj_cache, gcount_i, gcount_j, gcount_padded_j, periodic,
             dim, e, ci->grav.parts, cj->grav.parts, cj->grav.parts_foreign,
@@ -1609,6 +1662,7 @@ void runner_dopair_grav_pp(struct runner *r, struct cell *ci, struct cell *cj,
       if (cj_active && symmetric) {
 
         /* First the (Newtonian) P2P */
+        RUNNER_GRAV_PERF_COUNT(r, cj_cache, gcount_j, gcount_padded_i, 0);
         runner_dopair_grav_pp_full(
             cj_cache, ci_cache, gcount_j, gcount_i, gcount_padded_i, periodic,
             dim, e, cj->grav.parts, ci->grav.parts, ci->grav.parts_foreign,
@@ -1689,18 +1743,21 @@ void runner_dopair_grav_pp_no_cache(struct runner *r, struct cell *restrict ci,
 
   } else {
 
+    TASK_PERF_ADD(r, task_perf_grav_parts_loaded,
+                  ci->grav.count + cj->grav.count);
+
     /* Can we use the Newtonian version or do we need the truncated one ? */
     if (!periodic) {
 
       runner_dopair_grav_pp_full_no_cache(
-          ci->grav.parts, ci->grav.count, cj->grav.parts,
+          r, ci->grav.parts, ci->grav.count, cj->grav.parts,
           cj->grav.parts_foreign, cj->grav.count, e, e->gravity_properties,
           &r->ci_gravity_cache, ci, cj, cj->grav.multipole);
 
     } else {
 
       runner_dopair_grav_pp_truncated_no_cache(
-          ci->grav.parts, ci->grav.count, cj->grav.parts,
+          r, ci->grav.parts, ci->grav.count, cj->grav.parts,
           cj->grav.parts_foreign, cj->grav.count, dim, e, e->gravity_properties,
           &r->ci_gravity_cache, ci, cj, cj->grav.multipole);
     }
@@ -2050,11 +2107,13 @@ void runner_doself_grav_pp(struct runner *r, struct cell *c) {
   gravity_cache_populate_no_mpole(e->max_active_bin, ci_cache, c->grav.parts,
                                   gcount, gcount_padded, loc, c,
                                   e->gravity_properties);
+  TASK_PERF_ADD(r, task_perf_grav_parts_loaded, gcount);
 
   /* Can we use the Newtonian version or do we need the truncated one ? */
   if (!periodic) {
 
     /* Not periodic -> Can always use Newtonian potential */
+    RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount, gcount_padded - 1, 0);
     runner_doself_grav_pp_full(ci_cache, gcount, gcount_padded, e,
                                c->grav.parts);
 
@@ -2067,12 +2126,14 @@ void runner_doself_grav_pp(struct runner *r, struct cell *c) {
     if (max_r > min_trunc) {
 
       /* Periodic but far-away cells must use the truncated potential */
+      RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount, gcount_padded - 1, 1);
       runner_doself_grav_pp_truncated(ci_cache, gcount, gcount_padded, r_s_inv,
                                       e, c->grav.parts);
 
     } else {
 
       /* Periodic but close-by cells can use the full Newtonian potential */
+      RUNNER_GRAV_PERF_COUNT(r, ci_cache, gcount, gcount_padded - 1, 0);
       runner_doself_grav_pp_full(ci_cache, gcount, gcount_padded, e,
                                  c->grav.parts);
     }
